@@ -1,5 +1,10 @@
 package com.kdotz.newsreader
 
+import android.content.Context
+import android.content.Intent
+import android.database.Cursor
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteStatement
 import android.os.AsyncTask
 import android.os.Bundle
 import android.support.v7.app.AppCompatActivity
@@ -12,25 +17,20 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 
-
-
-
-
 class MainActivity : AppCompatActivity() {
-
-    var titles = mutableListOf<String>()
-
-    lateinit var arrayAdapter: ArrayAdapter<String>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val task = DownloadTask()
+        articlesDB = this.openOrCreateDatabase("Articles", Context.MODE_PRIVATE, null)
 
+        articlesDB.execSQL("CREATE TABLE IF NOT EXISTS articles (id INTEGER PRIMARY KEY, articleId INTEGER, title VARCHAR, content VARCHAR)")
+
+        val task = DownloadTask()
         try {
 
-            task.execute("https://hacker-news.firebaseio.com/v0/topstories.json?print=pretty")
+//            task.execute("https://hacker-news.firebaseio.com/v0/topstories.json?print=pretty")
 
         } catch (e: Exception) {
             e.printStackTrace()
@@ -39,11 +39,21 @@ class MainActivity : AppCompatActivity() {
         val listView = findViewById<ListView>(R.id.listView)
         arrayAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, titles)
         listView.adapter = arrayAdapter
+
+        listView.setOnItemClickListener { _, _, position, _ ->
+            val intent = Intent(this, ArticleActivity::class.java)
+            intent.putExtra("content", content[position])
+            startActivity(intent)
+        }
+
+        updateListView()
     }
+
 
     class DownloadTask : AsyncTask<String, Void, String>() {
 
         override fun doInBackground(vararg urls: String?): String {
+
             var result = ""
             var url: URL
             var urlConnection: HttpURLConnection? = null
@@ -73,6 +83,8 @@ class MainActivity : AppCompatActivity() {
                     numberOfItems = jsonArray.length()
                 }
 
+                articlesDB.execSQL("DELETE FROM articles")
+
                 for (i in 0..numberOfItems) {
 
                     val articleId = jsonArray.getString(i)
@@ -94,7 +106,7 @@ class MainActivity : AppCompatActivity() {
 
                     val jsonObject = JSONObject(articleInfo)
 
-                    if (!jsonObject.isNull("title") && !jsonObject.isNull("url")) {
+                    if (!jsonObject.isNull("title") && !jsonObject.isNull("url") && !jsonObject.getString("title").contains("airbnb", ignoreCase = true)) {
 
                         val articleTitle = jsonObject.getString("title")
                         val articleUrl = jsonObject.getString("url")
@@ -112,6 +124,16 @@ class MainActivity : AppCompatActivity() {
                         }
 
                         Log.i("HTML", articleContent)
+
+                        val sql = "INSERT INTO articles (articleId, title, content) VALUES (?, ?, ?)"
+
+                        val statement: SQLiteStatement = articlesDB.compileStatement(sql)
+
+                        statement.bindString(1, articleId)
+                        statement.bindString(2, articleTitle)
+                        statement.bindString(3, articleContent)
+
+                        statement.execute()
                     }
                 }
 
@@ -125,5 +147,38 @@ class MainActivity : AppCompatActivity() {
             return ""
         }
 
+        override fun onPostExecute(result: String?) {
+            super.onPostExecute(result)
+
+            updateListView()
+        }
+
     }
+
+    companion object {
+        lateinit var articlesDB: SQLiteDatabase
+        var titles = mutableListOf<String>()
+        var content = mutableListOf<String>()
+
+        lateinit var arrayAdapter: ArrayAdapter<String>
+
+        fun updateListView() {
+            val c: Cursor = articlesDB.rawQuery("SELECT * FROM articles", null)
+            val contentIndex = c.getColumnIndex("content")
+            val titleIndex = c.getColumnIndex("title")
+
+            if (c.moveToFirst()) {
+                titles.clear()
+                content.clear()
+
+                do {
+                    titles.add(c.getString(titleIndex))
+                    content.add(c.getString(contentIndex))
+                } while (c.moveToNext())
+
+                arrayAdapter.notifyDataSetChanged()
+            }
+        }
+    }
+
 }
